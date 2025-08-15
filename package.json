@@ -17,7 +17,7 @@
     "next": "15.4.6",
     "react": "19.1.0",
     "react-dom": "19.1.0",
-    "tldraw": "^3.15.1",
+    "tldraw": "3.15.1",
     "vercel": "^45.0.9",
     "zod": "^3.25.76"
   },
@@ -33,7 +33,6 @@
     "typescript": "^5"
   },
   "overrides": {
-    "tldraw": "3.15.1",
     "@tldraw/assets": "3.15.1",
     "@tldraw/editor": "3.15.1",
     "@tldraw/state": "3.15.1",

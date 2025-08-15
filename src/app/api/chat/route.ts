@@ -10,7 +10,7 @@ export async function POST(req: Request) {
   // Support overrides via headers for client-provided OpenAI compatible servers
   const baseURL = req.headers.get("x-provider-base-url") || undefined
   const apiKey = req.headers.get("x-provider-api-key") || process.env.OPENAI_API_KEY
-  const modelName = req.headers.get("x-provider-model") || process.env.OPENAI_MODEL || "gpt-4o-mini"
+  const modelName = req.headers.get("x-provider-model") || process.env.OPENAI_MODEL || "gpt-5-mini"
 
   const configured = baseURL
     ? createOpenAI({ baseURL, apiKey: apiKey || undefined })(modelName)

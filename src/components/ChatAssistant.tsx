@@ -11,7 +11,7 @@ export function ChatAssistant({ listCanvasNames, exportCanvas }: Props) {
   const [useCustom, setUseCustom] = useState<boolean>(false)
   const [baseURL, setBaseURL] = useState<string>("")
   const [apiKey, setApiKey] = useState<string>("")
-  const [model, setModel] = useState<string>("gpt-4o-mini")
+  const [model, setModel] = useState<string>("gpt-5-mini")
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -119,7 +119,22 @@ export function ChatAssistant({ listCanvasNames, exportCanvas }: Props) {
           onChange={(e) => setInput(e.target.value)}
           placeholder="Ask anything... Use @CanvasName to attach a canvas"
         />
-        <button className="px-3 py-2 rounded bg-neutral-900 text-white text-sm">
+        <button
+          type="button"
+          className="px-3 py-2 rounded border border-neutral-300 text-sm"
+          onClick={async () => {
+            // Attach all canvases by synthesizing mentions
+            const allNames = listCanvasNames
+            let msg = input
+            for (const n of allNames) {
+              if (!msg.includes(`@${n}`)) msg += (msg ? " " : "") + `@${n}`
+            }
+            setInput(msg)
+          }}
+        >
+          Refer all
+        </button>
+        <button className="px-3 py-2 rounded bg-neutral-900 text-white text-sm" type="submit">
           Send
         </button>
       </form>

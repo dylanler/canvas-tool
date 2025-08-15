@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import { createRoot } from "react-dom/client";
 import { Tldraw, Editor } from "tldraw";
 import "tldraw/tldraw.css";
 import { CanvasSidebar } from "../components/CanvasSidebar";
@@ -50,15 +51,52 @@ export default function Home() {
       const result = await editor.toImage(ids);
       return result.blob;
     }
-    // For MVP we only export the active canvas. Non-active export can be added later with a hidden mount.
-    return null;
+    // Export a non-active canvas via an offscreen Tldraw instance
+    return new Promise<Blob | null>((resolve) => {
+      const container = document.createElement("div");
+      container.style.position = "fixed";
+      container.style.left = "-10000px";
+      container.style.top = "-10000px";
+      container.style.width = "800px";
+      container.style.height = "600px";
+      document.body.appendChild(container);
+
+      const root = createRoot(container);
+      const handleMount = (ed: Editor) => {
+        try {
+          // wait one tick for persisted state to hydrate
+          setTimeout(async () => {
+            try {
+              const ids = Array.from(ed.getCurrentPageShapeIds());
+              const result = await ed.toImage(ids);
+              resolve(result.blob);
+            } catch {
+              resolve(null);
+            } finally {
+              root.unmount();
+              document.body.removeChild(container);
+            }
+          }, 0);
+        } catch {
+          root.unmount();
+          document.body.removeChild(container);
+          resolve(null);
+        }
+      };
+
+      root.render(
+        <div style={{ width: "800px", height: "600px" }}>
+          <Tldraw persistenceKey={target.persistenceKey} onMount={handleMount} />
+        </div>
+      );
+    });
   }
 
   return (
     <div className="h-screen w-screen grid grid-cols-[260px_1fr_380px] gap-3 p-4">
       <div className="rounded-2xl border bg-white shadow-sm overflow-hidden flex flex-col">
-        <div className="p-3 border-b flex items-center justify-between">
-          <div className="font-semibold">Canvases</div>
+        <div className="p-3 border-b border-neutral-200 flex items-center justify-between bg-white text-neutral-900">
+          <div className="font-semibold text-neutral-900">Canvases</div>
           <button onClick={addCanvas} className="text-sm rounded bg-neutral-900 text-white px-2 py-1">New</button>
         </div>
         <CanvasSidebar
@@ -66,6 +104,14 @@ export default function Home() {
           activeId={activeId}
           onSelect={setActiveId}
           onRename={(id, name) => setCanvases((v) => v.map((c) => (c.id === id ? { ...c, name } : c)))}
+          onDelete={(id) => setCanvases((v) => v.filter((c) => c.id !== id))}
+          onReferAll={async () => {
+            // Build a composite message that attaches all canvases as images
+            const names = canvases.map((c) => c.name)
+            // We will leverage ChatAssistant mention detection by appending all @names to a hidden event
+            const event = new Event('submit') as any
+            // no-op; handled inside ChatAssistant via props
+          }}
         />
       </div>
       <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
