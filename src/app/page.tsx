@@ -14,6 +14,10 @@ export default function Home() {
   ]);
   const [activeId, setActiveId] = useState<string>("1");
   const [editor, setEditor] = useState<Editor | null>(null);
+  const [chatSessions, setChatSessions] = useState<{ id: string; title: string }[]>([{ id: "default", title: "Chat 1" }]);
+  const [activeChatId, setActiveChatId] = useState<string>("default");
+  const [leftCollapsed, setLeftCollapsed] = useState<boolean>(false)
+  const [chatSidebarOpen, setChatSidebarOpen] = useState<boolean>(true)
   useEffect(() => {
     // load from localStorage after mount
     try {
@@ -93,11 +97,19 @@ export default function Home() {
   }
 
   return (
-    <div className="h-screen w-screen grid grid-cols-[260px_1fr_380px] gap-3 p-4">
+    <div className="h-screen w-screen grid gap-3 p-4" style={{ gridTemplateColumns: leftCollapsed ? "24px 1fr 380px" : "260px 1fr 380px" }}>
+      {leftCollapsed ? (
+        <div className="rounded-2xl border bg-white shadow-sm overflow-hidden flex items-center justify-center">
+          <button className="text-xs px-2 py-1" title="Show canvases" onClick={() => setLeftCollapsed(false)}>›</button>
+        </div>
+      ) : (
       <div className="rounded-2xl border bg-white shadow-sm overflow-hidden flex flex-col">
         <div className="p-3 border-b border-neutral-200 flex items-center justify-between bg-white text-neutral-900">
           <div className="font-semibold text-neutral-900">Canvases</div>
-          <button onClick={addCanvas} className="text-sm rounded bg-neutral-900 text-white px-2 py-1">New</button>
+          <div className="flex items-center gap-2">
+            <button onClick={addCanvas} className="text-sm rounded bg-neutral-900 text-white px-2 py-1">New</button>
+            <button className="text-xs px-2 py-1 rounded border" onClick={() => setLeftCollapsed(true)}>Hide</button>
+          </div>
         </div>
         <CanvasSidebar
           canvases={canvases}
@@ -114,11 +126,53 @@ export default function Home() {
           }}
         />
       </div>
+      )}
       <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
         <Tldraw persistenceKey={active.persistenceKey} onMount={setEditor} />
       </div>
-      <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
-        <ChatAssistant listCanvasNames={canvases.map((c) => c.name)} exportCanvas={exportCanvas} />
+      <div className="rounded-2xl border bg-white shadow-sm overflow-hidden flex flex-col">
+        <div className="p-2 border-b border-neutral-200 flex items-center justify-end">
+          <button className="text-xs px-2 py-1 rounded border font-semibold text-neutral-900" onClick={() => setChatSidebarOpen((v) => !v)}>
+            {chatSidebarOpen ? 'Hide history' : 'Show history'}
+          </button>
+        </div>
+        <div className="flex-1 flex min-h-0">
+        {chatSidebarOpen && (
+        <div className="w-40 border-r border-neutral-200 p-2 space-y-2">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-xs font-semibold text-neutral-700">Chats</div>
+            <button
+              className="w-6 h-6 rounded-full bg-neutral-900 text-white text-sm"
+              title="New chat"
+              onClick={() => {
+                setChatSessions((prev) => {
+                  const id = crypto.randomUUID();
+                  const next = [{ id, title: `Chat ${prev.length + 1}` }, ...prev].slice(0, 5);
+                  setActiveChatId(id);
+                  return next;
+                });
+              }}
+            >
+              +
+            </button>
+          </div>
+          <div className="space-y-1 overflow-auto">
+            {chatSessions.map((s) => (
+              <button
+                key={s.id}
+                className={`w-full text-left text-xs px-2 py-1 rounded ${s.id === activeChatId ? "bg-neutral-900 text-white" : "hover:bg-neutral-100"}`}
+                onClick={() => setActiveChatId(s.id)}
+              >
+                {s.title}
+              </button>
+            ))}
+          </div>
+        </div>
+        )}
+        <div className="flex-1 min-w-0">
+          <ChatAssistant listCanvasNames={canvases.map((c) => c.name)} exportCanvas={exportCanvas} />
+        </div>
+        </div>
       </div>
     </div>
   );
