@@ -54,7 +54,7 @@ export default function Home() {
     } catch {}
   }, [canvases]);
 
-  const active = canvases.find((c) => c.id === activeId)!;
+  const active = canvases.find((c) => c.id === activeId) ?? canvases[0] ?? null;
 
   function addCanvas() {
     const idx = canvases.length + 1;
@@ -62,6 +62,15 @@ export default function Home() {
     const next = { id: crypto.randomUUID(), name: `Canvas ${idx}`, persistenceKey: `canvas-${idx}-${uniqueSuffix}` };
     setCanvases((v) => [...v, next]);
     setActiveId(next.id);
+  }
+
+  function deleteCanvas(id: string) {
+    const next = canvases.filter((c) => c.id !== id)
+    setCanvases(next)
+    // If the active canvas was deleted, select the first remaining canvas (if any)
+    if (!next.some((c) => c.id === activeId)) {
+      setActiveId(next[0]?.id ?? "")
+    }
   }
 
   async function resetEverything() {
@@ -120,7 +129,7 @@ export default function Home() {
     if (!name) return null;
     const target = canvases.find((c) => c.name === name);
     if (!target) return null;
-    if (target.id === active.id && editor) {
+    if (active && target.id === active.id && editor) {
       const ids = Array.from(editor.getCurrentPageShapeIds());
       const result = await editor.toImage(ids);
       return result.blob;
@@ -199,7 +208,7 @@ export default function Home() {
           activeId={activeId}
           onSelect={setActiveId}
           onRename={(id, name) => setCanvases((v) => v.map((c) => (c.id === id ? { ...c, name } : c)))}
-          onDelete={(id) => setCanvases((v) => v.filter((c) => c.id !== id))}
+          onDelete={deleteCanvas}
           onReferAll={async () => {
             const names = canvases.map((c) => c.name)
             const event = new Event('submit') as any
@@ -216,7 +225,13 @@ export default function Home() {
       </div>
       )}
       <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
-        <Tldraw key={active.persistenceKey} persistenceKey={active.persistenceKey} onMount={setEditor} />
+        {active ? (
+          <Tldraw key={active.persistenceKey} persistenceKey={active.persistenceKey} onMount={setEditor} />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center text-neutral-500 text-sm">
+            No canvases. Click "New" to create one.
+          </div>
+        )}
       </div>
       <div className="rounded-2xl border bg-white shadow-sm overflow-hidden flex flex-col">
         <div className="p-2 border-b border-neutral-200 flex items-center justify-end">
