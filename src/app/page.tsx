@@ -160,7 +160,7 @@ export default function Home() {
             {chatSessions.map((s) => (
               <button
                 key={s.id}
-                className={`w-full text-left text-xs px-2 py-1 rounded ${s.id === activeChatId ? "bg-neutral-900 text-white" : "hover:bg-neutral-100"}`}
+                className={`w-full text-left text-sm px-2 py-1 rounded font-semibold ${s.id === activeChatId ? "bg-neutral-900 text-white" : "text-neutral-900 hover:bg-neutral-100"}`}
                 onClick={() => setActiveChatId(s.id)}
               >
                 {s.title}
@@ -170,7 +170,7 @@ export default function Home() {
         </div>
         )}
         <div className="flex-1 min-w-0">
-          <ChatAssistant listCanvasNames={canvases.map((c) => c.name)} exportCanvas={exportCanvas} />
+          <ChatAssistant key={activeChatId} listCanvasNames={canvases.map((c) => c.name)} exportCanvas={exportCanvas} />
         </div>
         </div>
       </div>

@@ -8,12 +8,14 @@ export async function POST(req: Request) {
   const messages: UIMessage[] = body.messages || []
 
   // Support overrides via headers for client-provided OpenAI compatible servers
-  const baseURL = req.headers.get("x-provider-base-url") || undefined
-  const apiKey = req.headers.get("x-provider-api-key") || process.env.OPENAI_API_KEY
+  const headerBaseURL = req.headers.get("x-provider-base-url") || undefined
+  const headerApiKey = req.headers.get("x-provider-api-key") || undefined
   const modelName = req.headers.get("x-provider-model") || process.env.OPENAI_MODEL || "gpt-5-mini"
 
-  const configured = baseURL
-    ? createOpenAI({ baseURL, apiKey: apiKey || undefined })(modelName)
+  // If either a custom API key or base URL is supplied, use a custom OpenAI client.
+  // This ensures users can just provide an API key for the default OpenAI endpoint.
+  const configured = headerApiKey || headerBaseURL
+    ? createOpenAI({ baseURL: headerBaseURL, apiKey: headerApiKey })(modelName)
     : openai(modelName)
 
   const result = streamText({

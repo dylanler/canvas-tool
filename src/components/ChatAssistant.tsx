@@ -175,7 +175,7 @@ export function ChatAssistant({ listCanvasNames, exportCanvas }: Props) {
           <div className="flex flex-wrap gap-2 items-center">
             <input
               className="border border-neutral-300 px-2 py-1 rounded text-xs text-neutral-900 placeholder-neutral-500"
-              placeholder="Base URL"
+              placeholder="https://api.openai.com/v1"
               value={baseURL}
               onChange={(e) => setBaseURL(e.target.value)}
             />
@@ -219,7 +219,7 @@ export function ChatAssistant({ listCanvasNames, exportCanvas }: Props) {
         {messages.map((m: any) => (
           <div key={m.id} className="text-sm text-neutral-900">
             <div className="font-semibold mb-1 text-neutral-800">{m.role}</div>
-            <div className="prose prose-sm max-w-none">
+            <div className="text-sm text-neutral-900 leading-6 whitespace-pre-wrap break-words">
               {m.parts?.map((part: any, i: number) => {
                 if (part.type === "text") return <ReactMarkdown key={i}>{part.text}</ReactMarkdown>
                 if (part.type === "file" && part.mediaType?.startsWith("image/")) {
