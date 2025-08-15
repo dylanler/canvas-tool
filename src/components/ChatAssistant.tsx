@@ -1,6 +1,7 @@
 "use client"
 import { useEffect, useMemo, useRef, useState } from "react"
 import ReactMarkdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 import { useChat } from "@ai-sdk/react"
 
 type Props = {
@@ -9,6 +10,7 @@ type Props = {
 }
 
 export function ChatAssistant({ listCanvasNames, exportCanvas }: Props) {
+  // Persist provider settings for the entire browser session (across chats)
   const [useCustom, setUseCustom] = useState<boolean>(false)
   const [baseURL, setBaseURL] = useState<string>("")
   const [apiKey, setApiKey] = useState<string>("")
@@ -16,32 +18,38 @@ export function ChatAssistant({ listCanvasNames, exportCanvas }: Props) {
   const [saveIndicator, setSaveIndicator] = useState<"" | "saved">("")
   const [showApiKey, setShowApiKey] = useState<boolean>(false)
 
+  // Hydrate settings from storage after mount to avoid SSR/client mismatch
   useEffect(() => {
-    if (typeof window !== "undefined") {
-      const storedEnabled = window.localStorage.getItem("customProviderEnabled")
-      const storedBase = window.localStorage.getItem("providerBaseURL")
-      const storedKey = window.localStorage.getItem("providerApiKey")
-      const storedModel = window.localStorage.getItem("providerModel")
-      setUseCustom(storedEnabled === "1")
-      if (storedBase) setBaseURL(storedBase)
-      if (storedKey) setApiKey(storedKey)
-      if (storedModel) setModel(storedModel)
-    }
+    try {
+      const ss = window.sessionStorage
+      const ls = window.localStorage
+      const enabled = ss.getItem("customProviderEnabled") ?? ls.getItem("customProviderEnabled")
+      const nextUseCustom = enabled === "1"
+      const nextBaseURL = ss.getItem("providerBaseURL") ?? ls.getItem("providerBaseURL") ?? ""
+      const nextApiKey = ss.getItem("providerApiKey") ?? ls.getItem("providerApiKey") ?? ""
+      const nextModel = ss.getItem("providerModel") ?? ls.getItem("providerModel") ?? "gpt-5-mini"
+      setUseCustom(nextUseCustom)
+      setBaseURL(nextBaseURL)
+      setApiKey(nextApiKey)
+      setModel(nextModel)
+    } catch {}
   }, [])
 
   useEffect(() => {
-    localStorage.setItem("customProviderEnabled", useCustom ? "1" : "0")
-    localStorage.setItem("providerBaseURL", baseURL)
-    localStorage.setItem("providerApiKey", apiKey)
-    localStorage.setItem("providerModel", model)
+    try {
+      sessionStorage.setItem("customProviderEnabled", useCustom ? "1" : "0")
+      sessionStorage.setItem("providerBaseURL", baseURL)
+      sessionStorage.setItem("providerApiKey", apiKey)
+      sessionStorage.setItem("providerModel", model)
+    } catch {}
   }, [useCustom, baseURL, apiKey, model])
 
   function handleSaveProviderSettings() {
     try {
-      window.localStorage.setItem("customProviderEnabled", useCustom ? "1" : "0")
-      window.localStorage.setItem("providerBaseURL", baseURL)
-      window.localStorage.setItem("providerApiKey", apiKey)
-      window.localStorage.setItem("providerModel", model)
+      window.sessionStorage.setItem("customProviderEnabled", useCustom ? "1" : "0")
+      window.sessionStorage.setItem("providerBaseURL", baseURL)
+      window.sessionStorage.setItem("providerApiKey", apiKey)
+      window.sessionStorage.setItem("providerModel", model)
       setSaveIndicator("saved")
       setTimeout(() => setSaveIndicator(""), 1500)
     } catch {
@@ -49,8 +57,9 @@ export function ChatAssistant({ listCanvasNames, exportCanvas }: Props) {
     }
   }
 
-  // basic local chat history retention: keep last 5 chats in-memory for this session only
-  const { messages, sendMessage } = useChat({})
+  // Chat hook
+  const chatApi = useChat({})
+  const { messages, sendMessage } = chatApi as any
   const [input, setInput] = useState("")
   const inputRef = useRef<HTMLInputElement | null>(null)
   const [caret, setCaret] = useState<number>(0)
@@ -58,6 +67,13 @@ export function ChatAssistant({ listCanvasNames, exportCanvas }: Props) {
   const [mentionStart, setMentionStart] = useState<number | null>(null)
   const [mentionQuery, setMentionQuery] = useState<string>("")
   const [highlightIndex, setHighlightIndex] = useState<number>(0)
+
+  function clearChat() {
+    try {
+      ;(chatApi as any).setMessages?.([])
+    } catch {}
+    setInput("")
+  }
 
   function updateCaretAndMention(nextValue: string, nextCaret: number) {
     setCaret(nextCaret)
@@ -163,6 +179,13 @@ export function ChatAssistant({ listCanvasNames, exportCanvas }: Props) {
   return (
     <div className="h-full flex flex-col bg-white text-neutral-900">
       <div className="p-3 border-b border-neutral-200 flex items-center gap-2">
+        <button
+          type="button"
+          className="text-xs px-2 py-1 rounded border font-semibold text-neutral-900 hover:bg-neutral-100"
+          onClick={clearChat}
+        >
+          Clear chat
+        </button>
         <div className="font-semibold">Assistant</div>
         <div className="ml-auto text-xs text-neutral-600">@mention a canvas to attach it</div>
       </div>
@@ -216,20 +239,68 @@ export function ChatAssistant({ listCanvasNames, exportCanvas }: Props) {
         )}
       </div>
       <div className="flex-1 overflow-auto p-3 space-y-4">
-        {messages.map((m: any) => (
-          <div key={m.id} className="text-sm text-neutral-900">
-            <div className="font-semibold mb-1 text-neutral-800">{m.role}</div>
-            <div className="text-sm text-neutral-900 leading-6 whitespace-pre-wrap break-words">
-              {m.parts?.map((part: any, i: number) => {
-                if (part.type === "text") return <ReactMarkdown key={i}>{part.text}</ReactMarkdown>
-                if (part.type === "file" && part.mediaType?.startsWith("image/")) {
-                  return <img key={i} src={part.url} alt={part.filename || "image"} className="rounded border" />
-                }
-                return null
-              })}
+        {messages.map((m: any) => {
+          const isUser = m.role === "user"
+          return (
+            <div key={m.id} className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
+              <div
+                className={`max-w-[85%] rounded-lg border px-3 py-2 shadow-sm ${
+                  isUser ? "bg-blue-50 border-blue-200" : "bg-neutral-50 border-neutral-200"
+                }`}
+              >
+                <div className="text-sm text-neutral-900 leading-6 break-words max-w-full">
+                  {m.parts?.map((part: any, i: number) => {
+                    if (part.type === "text")
+                      return (
+                        <ReactMarkdown
+                          key={i}
+                          remarkPlugins={[remarkGfm]}
+                          components={{
+                            h1: ({ children }) => <h1 className="text-lg font-semibold text-neutral-900 mt-3 mb-2">{children}</h1>,
+                            h2: ({ children }) => <h2 className="text-base font-semibold text-neutral-900 mt-2 mb-1.5">{children}</h2>,
+                            h3: ({ children }) => <h3 className="text-sm font-semibold text-neutral-900 mt-2 mb-1">{children}</h3>,
+                            p: ({ children }) => <p className="my-2 text-neutral-900">{children}</p>,
+                            ul: ({ children }) => <ul className="list-disc pl-5 my-2 space-y-1">{children}</ul>,
+                            ol: ({ children }) => <ol className="list-decimal pl-5 my-2 space-y-1">{children}</ol>,
+                            li: ({ children }) => <li className="text-neutral-900 my-0.5">{children}</li>,
+                            strong: ({ children }) => <strong className="font-semibold text-neutral-900">{children}</strong>,
+                            em: ({ children }) => <em className="italic text-neutral-900">{children}</em>,
+                            code: ({ className, children }) => (
+                              <code className={`whitespace-pre-wrap break-words text-neutral-900 ${className || ""}`}>{children}</code>
+                            ),
+                            pre: ({ children }) => (
+                              <pre className="overflow-x-auto rounded-md bg-neutral-50 text-neutral-900 p-3 border border-neutral-200 max-w-full">{children}</pre>
+                            ),
+                            a: ({ href, children }) => (
+                              <a href={href || "#"} target="_blank" rel="noreferrer" className="text-blue-600 underline break-words">
+                                {children}
+                              </a>
+                            ),
+                            table: ({ children }) => (
+                              <div className="overflow-x-auto">
+                                <table className="table-auto border-collapse border border-neutral-200 w-full text-sm">{children}</table>
+                              </div>
+                            ),
+                            th: ({ children }) => <th className="border border-neutral-200 bg-neutral-50 p-2 text-left text-neutral-900">{children}</th>,
+                            td: ({ children }) => <td className="border border-neutral-200 p-2 text-neutral-900">{children}</td>,
+                            img: ({ src, alt }) => (
+                              <img src={src || ""} alt={alt || "image"} className="rounded border max-w-full h-auto" />
+                            ),
+                          }}
+                        >
+                          {part.text}
+                        </ReactMarkdown>
+                      )
+                    if (part.type === "file" && part.mediaType?.startsWith("image/")) {
+                      return <img key={i} src={part.url} alt={part.filename || "image"} className="rounded border max-w-full h-auto" />
+                    }
+                    return null
+                  })}
+                </div>
+              </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
       <form onSubmit={onSendWithMentions} className="p-3 border-t border-neutral-200 flex gap-2">
         <div className="relative flex-1">
@@ -271,7 +342,7 @@ export function ChatAssistant({ listCanvasNames, exportCanvas }: Props) {
             placeholder="Ask anything... Use @CanvasName to attach a canvas"
           />
           {mentionOpen && filteredMentions.length > 0 && (
-            <div className="absolute left-0 right-0 mt-1 z-20 border border-neutral-200 bg-white rounded shadow-sm max-h-56 overflow-auto">
+            <div className="absolute left-0 right-0 bottom-full mb-1 z-30 border border-neutral-200 bg-white rounded shadow-sm max-h-56 overflow-auto">
               {filteredMentions.map((name, idx) => (
                 <button
                   type="button"
