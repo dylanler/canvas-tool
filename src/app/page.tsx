@@ -182,18 +182,16 @@ export default function Home() {
       ) : (
       <div className="rounded-2xl border bg-white shadow-sm overflow-hidden flex flex-col relative">
         <div className="p-3 border-b border-neutral-200 flex items-center justify-between bg-white text-neutral-900">
+          <div className="font-semibold text-neutral-900">Canvases</div>
           <div className="flex items-center gap-2">
+            <button onClick={addCanvas} className="text-xs rounded-md bg-neutral-900 text-white px-2 py-1">New</button>
             <button
-              className="text-xs px-2 py-1 rounded border border-red-300 text-red-700 hover:bg-red-50"
+              className="text-xs px-2 py-1 rounded-md border border-red-300 text-red-700 hover:bg-red-50"
               title="Reset everything"
               onClick={resetEverything}
             >
-              Reset Everything
+              Reset
             </button>
-            <div className="font-semibold text-neutral-900">Canvases</div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button onClick={addCanvas} className="text-sm rounded bg-neutral-900 text-white px-2 py-1">New</button>
           </div>
         </div>
         <CanvasSidebar
