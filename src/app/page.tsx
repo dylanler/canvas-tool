@@ -175,6 +175,37 @@ export default function Home() {
     });
   }
 
+  async function exportAllAsPdf() {
+    try {
+      const { PDFDocument } = await import("pdf-lib");
+      const names = canvases.map((c) => c.name);
+      const blobs: { name: string; blob: Blob }[] = [];
+      for (const name of names) {
+        const blob = await exportCanvas(name);
+        if (blob) blobs.push({ name, blob });
+      }
+      if (blobs.length === 0) return;
+
+      const pdfDoc = await PDFDocument.create();
+      for (const item of blobs) {
+        const bytes = new Uint8Array(await item.blob.arrayBuffer());
+        const png = await pdfDoc.embedPng(bytes);
+        const page = pdfDoc.addPage([png.width, png.height]);
+        page.drawImage(png, { x: 0, y: 0, width: png.width, height: png.height });
+      }
+      const pdfBytes = await pdfDoc.save();
+      const outBlob = new Blob([pdfBytes], { type: "application/pdf" });
+      const url = URL.createObjectURL(outBlob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "canvases.pdf";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch {}
+  }
+
   return (
     <div className="h-screen w-screen grid gap-3 p-4" style={{ gridTemplateColumns: leftCollapsed ? "12px 1fr 380px" : "260px 1fr 380px" }}>
       {leftCollapsed ? (
@@ -213,6 +244,7 @@ export default function Home() {
             const names = canvases.map((c) => c.name)
             const event = new Event('submit') as any
           }}
+          onExportAll={exportAllAsPdf}
         />
         <button
           className="absolute top-1/2 -right-2 -translate-y-1/2 w-6 h-6 rounded-full border border-neutral-400 bg-neutral-200 shadow flex items-center justify-center text-xs text-neutral-900 hover:bg-neutral-300"

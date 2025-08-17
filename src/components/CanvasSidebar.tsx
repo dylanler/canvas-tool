@@ -10,6 +10,7 @@ export function CanvasSidebar({
   onRename,
   onDelete,
   onReferAll,
+  onExportAll,
 }: {
   canvases: Canvas[]
   activeId: string
@@ -17,15 +18,19 @@ export function CanvasSidebar({
   onRename: (id: string, name: string) => void
   onDelete: (id: string) => void
   onReferAll: () => void
+  onExportAll: () => void
 }) {
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draft, setDraft] = useState<string>("")
 
   return (
     <div className="flex-1 overflow-auto p-3 space-y-2 bg-white text-neutral-900">
-      <div className="pb-2 flex justify-end">
+      <div className="pb-2 flex justify-end gap-2">
         <button className="text-xs px-2 py-1 rounded border border-neutral-300 hover:bg-neutral-50" onClick={onReferAll}>
           Refer all to chat
+        </button>
+        <button className="text-xs px-2 py-1 rounded border border-neutral-300 hover:bg-neutral-50" onClick={onExportAll}>
+          Export All
         </button>
       </div>
       {canvases.map((c) => (
