@@ -193,16 +193,13 @@ export default function Home() {
         const page = pdfDoc.addPage([png.width, png.height]);
         page.drawImage(png, { x: 0, y: 0, width: png.width, height: png.height });
       }
-      const pdfBytes = await pdfDoc.save();
-      const outBlob = new Blob([pdfBytes], { type: "application/pdf" });
-      const url = URL.createObjectURL(outBlob);
+      const dataUri = await pdfDoc.saveAsBase64({ dataUri: true });
       const a = document.createElement("a");
-      a.href = url;
+      a.href = dataUri;
       a.download = "canvases.pdf";
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      URL.revokeObjectURL(url);
     } catch {}
   }
 
