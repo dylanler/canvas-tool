@@ -5,61 +5,27 @@ import remarkGfm from "remark-gfm"
 import { useChat } from "@ai-sdk/react"
 
 type Props = {
+  chatSessionId: string
   listCanvasNames: string[]
   exportCanvas: (name: string) => Promise<Blob | null>
 }
 
-export function ChatAssistant({ listCanvasNames, exportCanvas }: Props) {
-  // Persist provider settings for the entire browser session (across chats)
+export function ChatAssistant({ chatSessionId, listCanvasNames, exportCanvas }: Props) {
+  // Debug: Log canvas names
+  console.log("📋 Available canvas names:", listCanvasNames)
+  
+  // Provider settings (will be saved to database on save)
   const [useCustom, setUseCustom] = useState<boolean>(false)
   const [baseURL, setBaseURL] = useState<string>("")
   const [apiKey, setApiKey] = useState<string>("")
-  const [model, setModel] = useState<string>("gpt-5-mini")
+  const [model, setModel] = useState<string>("gpt-4o-mini")
   const [saveIndicator, setSaveIndicator] = useState<"" | "saved">("")
   const [showApiKey, setShowApiKey] = useState<boolean>(false)
 
-  // Hydrate settings from storage after mount to avoid SSR/client mismatch
-  useEffect(() => {
-    try {
-      const ss = window.sessionStorage
-      const ls = window.localStorage
-      const enabled = ss.getItem("customProviderEnabled") ?? ls.getItem("customProviderEnabled")
-      const nextUseCustom = enabled === "1"
-      const nextBaseURL = ss.getItem("providerBaseURL") ?? ls.getItem("providerBaseURL") ?? ""
-      const nextApiKey = ss.getItem("providerApiKey") ?? ls.getItem("providerApiKey") ?? ""
-      const nextModel = ss.getItem("providerModel") ?? ls.getItem("providerModel") ?? "gpt-5-mini"
-      setUseCustom(nextUseCustom)
-      setBaseURL(nextBaseURL)
-      setApiKey(nextApiKey)
-      setModel(nextModel)
-    } catch {}
-  }, [])
-
-  useEffect(() => {
-    try {
-      sessionStorage.setItem("customProviderEnabled", useCustom ? "1" : "0")
-      sessionStorage.setItem("providerBaseURL", baseURL)
-      sessionStorage.setItem("providerApiKey", apiKey)
-      sessionStorage.setItem("providerModel", model)
-    } catch {}
-  }, [useCustom, baseURL, apiKey, model])
-
-  function handleSaveProviderSettings() {
-    try {
-      window.sessionStorage.setItem("customProviderEnabled", useCustom ? "1" : "0")
-      window.sessionStorage.setItem("providerBaseURL", baseURL)
-      window.sessionStorage.setItem("providerApiKey", apiKey)
-      window.sessionStorage.setItem("providerModel", model)
-      setSaveIndicator("saved")
-      setTimeout(() => setSaveIndicator(""), 1500)
-    } catch {
-      // no-op: localStorage might be unavailable in rare cases
-    }
-  }
-
-  // Chat hook
-  const chatApi = useChat({})
-  const { messages, sendMessage } = chatApi as any
+  // Chat hook with database persistence
+  const { messages, setMessages, sendMessage } = useChat({
+    api: "/api/chat"
+  })
   const [input, setInput] = useState("")
   const inputRef = useRef<HTMLInputElement | null>(null)
   const [caret, setCaret] = useState<number>(0)
@@ -68,9 +34,79 @@ export function ChatAssistant({ listCanvasNames, exportCanvas }: Props) {
   const [mentionQuery, setMentionQuery] = useState<string>("")
   const [highlightIndex, setHighlightIndex] = useState<number>(0)
 
+  // Load chat history from database when chat session changes
+  useEffect(() => {
+    if (!chatSessionId) return
+
+    async function loadChatHistory() {
+      try {
+        const response = await fetch(`/api/chat-sessions/${chatSessionId}/messages`)
+        if (response.ok) {
+          const messages = await response.json()
+          const formattedMessages = messages.map((msg: any) => ({
+            id: msg.id,
+            role: msg.role,
+            content: msg.content.find((part: any) => part.type === "text")?.text || "",
+            // Keep parts for UI rendering
+            parts: msg.content
+          }))
+          setMessages(formattedMessages)
+        }
+      } catch (error) {
+        console.error("Failed to load chat history:", error)
+      }
+    }
+
+    loadChatHistory()
+  }, [chatSessionId, setMessages])
+
+  // Load user's provider settings
+  useEffect(() => {
+    async function loadProviderSettings() {
+      try {
+        const response = await fetch("/api/user/provider-settings")
+        if (response.ok) {
+          const settings = await response.json()
+          if (settings) {
+            setUseCustom(settings.useCustom)
+            setBaseURL(settings.baseUrl || "")
+            setApiKey(settings.apiKey || "")
+            setModel(settings.model || "gpt-4o-mini")
+          }
+        }
+      } catch (error) {
+        console.error("Failed to load provider settings:", error)
+      }
+    }
+
+    loadProviderSettings()
+  }, [])
+
+  async function handleSaveProviderSettings() {
+    try {
+      const response = await fetch("/api/user/provider-settings", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          useCustom,
+          baseUrl: baseURL,
+          apiKey,
+          model
+        })
+      })
+
+      if (response.ok) {
+        setSaveIndicator("saved")
+        setTimeout(() => setSaveIndicator(""), 1500)
+      }
+    } catch (error) {
+      console.error("Failed to save provider settings:", error)
+    }
+  }
+
   function clearChat() {
     try {
-      ;(chatApi as any).setMessages?.([])
+      setMessages([])
     } catch {}
     setInput("")
   }
@@ -80,6 +116,8 @@ export function ChatAssistant({ listCanvasNames, exportCanvas }: Props) {
     // Determine if we are inside a mention (from last '@' to the caret with no whitespace)
     const uptoCaret = nextValue.slice(0, nextCaret)
     const atIndex = uptoCaret.lastIndexOf("@")
+    console.log("🔍 Mention check:", { nextValue, nextCaret, atIndex, uptoCaret })
+    
     if (atIndex === -1) {
       setMentionOpen(false)
       setMentionStart(null)
@@ -143,10 +181,16 @@ export function ChatAssistant({ listCanvasNames, exportCanvas }: Props) {
     e.preventDefault()
     // Support canvas names with spaces by matching full names as typed with '@'
     const mentioned: string[] = listCanvasNames.filter((name) => input.includes(`@${name}`))
+    console.log("🎯 Mentioned canvases:", mentioned)
+    
     const attachments: { name: string; dataUrl: string }[] = []
     for (const name of mentioned) {
       if (!listCanvasNames.includes(name)) continue
+      console.log("📸 Exporting canvas:", name)
+      
       const blob = await exportCanvas(name)
+      console.log("📸 Export result:", blob ? `${blob.size} bytes` : "null")
+      
       if (!blob) continue
       const dataUrl = await new Promise<string>((resolve) => {
         const reader = new FileReader()
@@ -154,7 +198,10 @@ export function ChatAssistant({ listCanvasNames, exportCanvas }: Props) {
         reader.readAsDataURL(blob)
       })
       attachments.push({ name, dataUrl })
+      console.log("📎 Attachment added:", { name, dataUrlLength: dataUrl.length })
     }
+
+    console.log("📎 Total attachments:", attachments.length)
 
     const parts: any[] = [
       ...attachments.map((a) => ({ type: "file" as const, mediaType: "image/png", url: a.dataUrl })),
@@ -162,7 +209,13 @@ export function ChatAssistant({ listCanvasNames, exportCanvas }: Props) {
     ]
 
     await sendMessage(
-      { role: "user", parts },
+      { 
+        role: "user", 
+        content: input,
+        ...(attachments.length > 0 && { 
+          attachments: attachments.map(a => ({ name: a.name, url: a.dataUrl }))
+        })
+      },
       {
         headers: useCustom
           ? {
@@ -171,7 +224,11 @@ export function ChatAssistant({ listCanvasNames, exportCanvas }: Props) {
               "x-provider-model": model,
             }
           : undefined,
-      } as any
+        body: { 
+          chatSessionId,
+          attachments: attachments.map(a => ({ type: "image", url: a.dataUrl }))
+        }
+      }
     )
     setInput("")
   }
@@ -249,53 +306,102 @@ export function ChatAssistant({ listCanvasNames, exportCanvas }: Props) {
                 }`}
               >
                 <div className="text-sm text-neutral-900 leading-6 break-words max-w-full">
-                  {m.parts?.map((part: any, i: number) => {
-                    if (part.type === "text")
-                      return (
-                        <ReactMarkdown
-                          key={i}
-                          remarkPlugins={[remarkGfm]}
-                          components={{
-                            h1: ({ children }) => <h1 className="text-lg font-semibold text-neutral-900 mt-3 mb-2">{children}</h1>,
-                            h2: ({ children }) => <h2 className="text-base font-semibold text-neutral-900 mt-2 mb-1.5">{children}</h2>,
-                            h3: ({ children }) => <h3 className="text-sm font-semibold text-neutral-900 mt-2 mb-1">{children}</h3>,
-                            p: ({ children }) => <p className="my-2 text-neutral-900">{children}</p>,
-                            ul: ({ children }) => <ul className="list-disc pl-5 my-2 space-y-1">{children}</ul>,
-                            ol: ({ children }) => <ol className="list-decimal pl-5 my-2 space-y-1">{children}</ol>,
-                            li: ({ children }) => <li className="text-neutral-900 my-0.5">{children}</li>,
-                            strong: ({ children }) => <strong className="font-semibold text-neutral-900">{children}</strong>,
-                            em: ({ children }) => <em className="italic text-neutral-900">{children}</em>,
-                            code: ({ className, children }) => (
-                              <code className={`whitespace-pre-wrap break-words text-neutral-900 ${className || ""}`}>{children}</code>
-                            ),
-                            pre: ({ children }) => (
-                              <pre className="overflow-x-auto rounded-md bg-neutral-50 text-neutral-900 p-3 border border-neutral-200 max-w-full">{children}</pre>
-                            ),
-                            a: ({ href, children }) => (
-                              <a href={href || "#"} target="_blank" rel="noreferrer" className="text-blue-600 underline break-words">
-                                {children}
-                              </a>
-                            ),
-                            table: ({ children }) => (
-                              <div className="overflow-x-auto">
-                                <table className="table-auto border-collapse border border-neutral-200 w-full text-sm">{children}</table>
-                              </div>
-                            ),
-                            th: ({ children }) => <th className="border border-neutral-200 bg-neutral-50 p-2 text-left text-neutral-900">{children}</th>,
-                            td: ({ children }) => <td className="border border-neutral-200 p-2 text-neutral-900">{children}</td>,
-                            img: ({ src, alt }) => (
-                              <img src={src || ""} alt={alt || "image"} className="rounded border max-w-full h-auto" />
-                            ),
-                          }}
-                        >
-                          {part.text}
-                        </ReactMarkdown>
-                      )
-                    if (part.type === "file" && part.mediaType?.startsWith("image/")) {
-                      return <img key={i} src={part.url} alt={part.filename || "image"} className="rounded border max-w-full h-auto" />
-                    }
-                    return null
-                  })}
+                  {/* Show canvas attachments for user messages */}
+                  {isUser && (m as any).attachments && (m as any).attachments.length > 0 && (
+                    <div className="mb-2 space-y-2">
+                      {(m as any).attachments.map((attachment: any, i: number) => (
+                        <div key={i} className="relative">
+                          <img 
+                            src={attachment.url} 
+                            alt={attachment.name || "Canvas"} 
+                            className="rounded border max-w-48 h-auto shadow-sm"
+                          />
+                          <div className="text-xs text-neutral-600 mt-1">📎 {attachment.name || "Canvas"}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  
+                  {/* Handle AI SDK v2 message format */}
+                  {m.parts ? (
+                    // Assistant messages with parts array
+                    m.parts.map((part: any, i: number) => {
+                      if (part.type === "text")
+                        return (
+                          <ReactMarkdown
+                            key={i}
+                            remarkPlugins={[remarkGfm]}
+                            components={{
+                              h1: ({ children }) => <h1 className="text-lg font-semibold text-neutral-900 mt-3 mb-2">{children}</h1>,
+                              h2: ({ children }) => <h2 className="text-base font-semibold text-neutral-900 mt-2 mb-1.5">{children}</h2>,
+                              h3: ({ children }) => <h3 className="text-sm font-semibold text-neutral-900 mt-2 mb-1">{children}</h3>,
+                              p: ({ children }) => <p className="my-2 text-neutral-900">{children}</p>,
+                              ul: ({ children }) => <ul className="list-disc pl-5 my-2 space-y-1">{children}</ul>,
+                              ol: ({ children }) => <ol className="list-decimal pl-5 my-2 space-y-1">{children}</ol>,
+                              li: ({ children }) => <li className="text-neutral-900 my-0.5">{children}</li>,
+                              strong: ({ children }) => <strong className="font-semibold text-neutral-900">{children}</strong>,
+                              em: ({ children }) => <em className="italic text-neutral-900">{children}</em>,
+                              code: ({ className, children }) => (
+                                <code className={`whitespace-pre-wrap break-words text-neutral-900 ${className || ""}`}>{children}</code>
+                              ),
+                              pre: ({ children }) => (
+                                <pre className="overflow-x-auto rounded-md bg-neutral-50 text-neutral-900 p-3 border border-neutral-200 max-w-full">{children}</pre>
+                              ),
+                              a: ({ href, children }) => (
+                                <a href={href || "#"} target="_blank" rel="noreferrer" className="text-blue-600 underline break-words">
+                                  {children}
+                                </a>
+                              ),
+                              table: ({ children }) => (
+                                <div className="overflow-x-auto">
+                                  <table className="table-auto border-collapse border border-neutral-200 w-full text-sm">{children}</table>
+                                </div>
+                              ),
+                              th: ({ children }) => <th className="border border-neutral-200 bg-neutral-50 p-2 text-left text-neutral-900">{children}</th>,
+                              td: ({ children }) => <td className="border border-neutral-200 p-2 text-neutral-900">{children}</td>,
+                              img: ({ src, alt }) => (
+                                <img src={src || ""} alt={alt || "image"} className="rounded border max-w-full h-auto" />
+                              ),
+                            }}
+                          >
+                            {part.text}
+                          </ReactMarkdown>
+                        )
+                      if (part.type === "file" && part.mediaType?.startsWith("image/")) {
+                        return <img key={i} src={part.url} alt={part.filename || "image"} className="rounded border max-w-full h-auto" />
+                      }
+                      return null
+                    })
+                  ) : (
+                    // User messages with content string
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        h1: ({ children }) => <h1 className="text-lg font-semibold text-neutral-900 mt-3 mb-2">{children}</h1>,
+                        h2: ({ children }) => <h2 className="text-base font-semibold text-neutral-900 mt-2 mb-1.5">{children}</h2>,
+                        h3: ({ children }) => <h3 className="text-sm font-semibold text-neutral-900 mt-2 mb-1">{children}</h3>,
+                        p: ({ children }) => <p className="my-2 text-neutral-900">{children}</p>,
+                        ul: ({ children }) => <ul className="list-disc pl-5 my-2 space-y-1">{children}</ul>,
+                        ol: ({ children }) => <ol className="list-decimal pl-5 my-2 space-y-1">{children}</ol>,
+                        li: ({ children }) => <li className="text-neutral-900 my-0.5">{children}</li>,
+                        strong: ({ children }) => <strong className="font-semibold text-neutral-900">{children}</strong>,
+                        em: ({ children }) => <em className="italic text-neutral-900">{children}</em>,
+                        code: ({ className, children }) => (
+                          <code className={`whitespace-pre-wrap break-words text-neutral-900 ${className || ""}`}>{children}</code>
+                        ),
+                        pre: ({ children }) => (
+                          <pre className="overflow-x-auto rounded-md bg-neutral-50 text-neutral-900 p-3 border border-neutral-200 max-w-full">{children}</pre>
+                        ),
+                        a: ({ href, children }) => (
+                          <a href={href || "#"} target="_blank" rel="noreferrer" className="text-blue-600 underline break-words">
+                            {children}
+                          </a>
+                        ),
+                      }}
+                    >
+                      {(m as any).content || ''}
+                    </ReactMarkdown>
+                  )}
                 </div>
               </div>
             </div>
@@ -346,7 +452,7 @@ export function ChatAssistant({ listCanvasNames, exportCanvas }: Props) {
               {filteredMentions.map((name, idx) => (
                 <button
                   type="button"
-                  key={name}
+                  key={`mention-${idx}-${name}`}
                   className={`w-full text-left px-3 py-2 text-sm ${idx === highlightIndex ? "bg-neutral-100" : "bg-white"}`}
                   onMouseEnter={() => setHighlightIndex(idx)}
                   onMouseDown={(e) => {
@@ -382,8 +488,8 @@ export function ChatAssistant({ listCanvasNames, exportCanvas }: Props) {
 
       {listCanvasNames.length > 0 && (
         <div className="p-2 border-t border-neutral-200 text-xs flex flex-wrap gap-2">
-          {listCanvasNames.map((n) => (
-            <button key={n} className="px-2 py-1 rounded border border-neutral-300 text-neutral-800" onClick={() => insertMention(n)}>
+          {listCanvasNames.map((n, idx) => (
+            <button key={`canvas-btn-${idx}-${n}`} className="px-2 py-1 rounded border border-neutral-300 text-neutral-800" onClick={() => insertMention(n)}>
               @{n}
             </button>
           ))}
@@ -392,5 +498,3 @@ export function ChatAssistant({ listCanvasNames, exportCanvas }: Props) {
     </div>
   )
 }
-
-

@@ -5,124 +5,217 @@ import { Tldraw, Editor } from "tldraw";
 import "tldraw/tldraw.css";
 import { CanvasSidebar } from "../components/CanvasSidebar";
 import { ChatAssistant } from "../components/ChatAssistant";
+import { AuthWrapper } from "../components/AuthWrapper";
+import { useSession } from "next-auth/react";
+import { useCanvasSync } from "../hooks/useCanvasSync";
 
 type CanvasTab = { id: string; name: string; persistenceKey: string };
+type ChatSession = { id: string; title: string };
 
 export default function Home() {
-  // Session-scoped ID to ensure all persistenceKeys are unique per reset/session
-  const [sessionId, setSessionId] = useState<string>("")
-  const [canvases, setCanvases] = useState<CanvasTab[]>([
-    { id: "1", name: "Canvas 1", persistenceKey: `canvas-1-${typeof crypto !== 'undefined' && (crypto as any).randomUUID ? crypto.randomUUID() : Date.now()}` },
-  ]);
-  const [activeId, setActiveId] = useState<string>("1");
+  const { data: session } = useSession()
+  const [canvases, setCanvases] = useState<CanvasTab[]>([]);
+  const [activeId, setActiveId] = useState<string>("");
   const [editor, setEditor] = useState<Editor | null>(null);
-  const [chatSessions, setChatSessions] = useState<{ id: string; title: string }[]>([{ id: "default", title: "Chat 1" }]);
-  const [activeChatId, setActiveChatId] = useState<string>("default");
+  const [chatSessions, setChatSessions] = useState<ChatSession[]>([]);
+  const [activeChatId, setActiveChatId] = useState<string>("");
   const [leftCollapsed, setLeftCollapsed] = useState<boolean>(false)
   const [chatSidebarOpen, setChatSidebarOpen] = useState<boolean>(false)
+  const [loading, setLoading] = useState<boolean>(true)
+
+  // Load user's canvases and chat sessions from database
   useEffect(() => {
-    // Initialize or reuse a per-session ID so new canvases never collide with old persisted data
-    try {
-      const existing = window.sessionStorage.getItem("canvasSessionId")
-      if (existing) {
-        setSessionId(existing)
-      } else {
-        const sid = (typeof crypto !== 'undefined' && (crypto as any).randomUUID) ? crypto.randomUUID() : String(Date.now())
-        window.sessionStorage.setItem("canvasSessionId", sid)
-        setSessionId(sid)
+    if (!session?.user?.id) return
+
+    async function loadUserData() {
+      try {
+        // Load canvases
+        const canvasResponse = await fetch("/api/canvases")
+        if (canvasResponse.ok) {
+          const userCanvases = await canvasResponse.json()
+          if (userCanvases.length > 0) {
+            setCanvases(userCanvases)
+            setActiveId(userCanvases[0].id)
+          } else {
+            // Create first canvas for new user
+            await addCanvas()
+          }
+        }
+
+        // Load chat sessions
+        const chatResponse = await fetch("/api/chat-sessions")
+        if (chatResponse.ok) {
+          const userChats = await chatResponse.json()
+          if (userChats.length > 0) {
+            setChatSessions(userChats)
+            setActiveChatId(userChats[0].id)
+          } else {
+            // Create first chat session for new user
+            await addChatSession()
+          }
+        }
+      } catch (error) {
+        console.error("Failed to load user data:", error)
+        // Create default canvas and chat if loading fails
+        await addCanvas()
+        await addChatSession()
+      } finally {
+        setLoading(false)
       }
-    } catch {
-      // fallback ephemeral session id
-      setSessionId(String(Date.now()))
     }
 
-    // load from localStorage after mount
-    try {
-      const saved = window.localStorage.getItem("canvases");
-      if (saved) {
-        const parsed: CanvasTab[] = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setCanvases(parsed);
-          setActiveId(parsed[0].id);
-        }
-      }
-    } catch {}
-  }, []);
-  useEffect(() => {
-    try {
-      window.localStorage.setItem("canvases", JSON.stringify(canvases));
-    } catch {}
-  }, [canvases]);
+    loadUserData()
+  }, [session?.user?.id])
 
   const active = canvases.find((c) => c.id === activeId) ?? canvases[0] ?? null;
 
-  function addCanvas() {
-    const idx = canvases.length + 1;
-    const uniqueSuffix = sessionId || ((typeof crypto !== 'undefined' && (crypto as any).randomUUID) ? crypto.randomUUID() : String(Date.now()))
-    const next = { id: crypto.randomUUID(), name: `Canvas ${idx}`, persistenceKey: `canvas-${idx}-${uniqueSuffix}` };
-    setCanvases((v) => [...v, next]);
-    setActiveId(next.id);
+  // Sync active canvas changes to database
+  useCanvasSync(editor, activeId);
+
+  async function addCanvas() {
+    // Find next available canvas number to avoid duplicates
+    const existingNumbers = canvases
+      .map(c => c.name.match(/^Canvas (\d+)$/))
+      .filter(match => match)
+      .map(match => parseInt(match![1]))
+    
+    const nextNumber = existingNumbers.length === 0 ? 1 : Math.max(...existingNumbers) + 1
+    const name = `Canvas ${nextNumber}`
+    const persistenceKey = `canvas-${Date.now()}-${crypto.randomUUID()}`
+    
+    try {
+      const response = await fetch("/api/canvases", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, persistenceKey })
+      })
+      
+      if (response.ok) {
+        const newCanvas = await response.json()
+        setCanvases((v) => [...v, newCanvas])
+        setActiveId(newCanvas.id)
+      }
+    } catch (error) {
+      console.error("Failed to create canvas:", error)
+    }
   }
 
-  function deleteCanvas(id: string) {
-    const next = canvases.filter((c) => c.id !== id)
-    setCanvases(next)
-    // If the active canvas was deleted, select the first remaining canvas (if any)
-    if (!next.some((c) => c.id === activeId)) {
-      setActiveId(next[0]?.id ?? "")
+  async function addChatSession() {
+    // Find next available chat number to avoid duplicates
+    const existingNumbers = chatSessions
+      .map(c => c.title.match(/^Chat (\d+)$/))
+      .filter(match => match)
+      .map(match => parseInt(match![1]))
+    
+    const nextNumber = existingNumbers.length === 0 ? 1 : Math.max(...existingNumbers) + 1
+    const title = `Chat ${nextNumber}`
+    
+    try {
+      const response = await fetch("/api/chat-sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title })
+      })
+      
+      if (response.ok) {
+        const newChat = await response.json()
+        setChatSessions((v) => [...v, newChat])
+        setActiveChatId(newChat.id)
+      }
+    } catch (error) {
+      console.error("Failed to create chat session:", error)
+    }
+  }
+
+  async function deleteCanvas(id: string) {
+    try {
+      const response = await fetch(`/api/canvases/${id}`, {
+        method: "DELETE"
+      })
+      
+      if (response.ok) {
+        const next = canvases.filter((c) => c.id !== id)
+        setCanvases(next)
+        // If the active canvas was deleted, select the first remaining canvas (if any)
+        if (!next.some((c) => c.id === activeId)) {
+          setActiveId(next[0]?.id ?? "")
+        }
+      }
+    } catch (error) {
+      console.error("Failed to delete canvas:", error)
+    }
+  }
+
+  async function renameCanvas(id: string, name: string) {
+    try {
+      const response = await fetch(`/api/canvases/${id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name })
+      })
+      
+      if (response.ok) {
+        setCanvases((v) => v.map((c) => (c.id === id ? { ...c, name } : c)))
+      }
+    } catch (error) {
+      console.error("Failed to rename canvas:", error)
     }
   }
 
   async function resetEverything() {
-    // Best-effort purge of any Tldraw-related IndexedDB databases so all pages are removed
-    const previousKeys = canvases.map((c) => c.persistenceKey)
     try {
-      const anyIDB: any = indexedDB as any
-      if (anyIDB && typeof anyIDB.databases === "function") {
-        const dbs: { name?: string }[] = await anyIDB.databases()
-        for (const db of dbs) {
-          const name = db?.name || ""
-          if (!name) continue
-          if (
-            name.toLowerCase().includes("tldraw") ||
-            previousKeys.some((k) => name.includes(k))
-          ) {
-            try { indexedDB.deleteDatabase(name) } catch {}
-          }
-        }
-      } else {
-        // Fallback: try common tldraw naming patterns with known keys
-        for (const key of previousKeys) {
-          try { indexedDB.deleteDatabase(`tldraw-${key}`) } catch {}
-          try { indexedDB.deleteDatabase(key) } catch {}
-        }
+      // Delete all canvases and chat sessions from database in parallel
+      await Promise.all([
+        fetch("/api/canvases", { method: "DELETE" }),
+        fetch("/api/chat-sessions", { method: "DELETE" })
+      ])
+      
+      // Clear local state FIRST
+      setCanvases([])
+      setActiveId("")
+      setEditor(null)
+      setChatSessions([])
+      setActiveChatId("")
+      setLeftCollapsed(false)
+      setChatSidebarOpen(false)
+      
+      // Wait a moment for state to update, then create defaults
+      await new Promise(resolve => setTimeout(resolve, 100))
+      
+      // Create Canvas 1 and Chat 1 explicitly
+      const canvas1Name = "Canvas 1"
+      const chat1Name = "Chat 1"
+      const persistenceKey = `canvas-${Date.now()}-${crypto.randomUUID()}`
+      
+      // Create Canvas 1
+      const canvasResponse = await fetch("/api/canvases", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: canvas1Name, persistenceKey })
+      })
+      
+      if (canvasResponse.ok) {
+        const newCanvas = await canvasResponse.json()
+        setCanvases([newCanvas])
+        setActiveId(newCanvas.id)
       }
-    } catch {}
-
-    // Clear app-local persistence references and start a brand new session so no old IndexedDB data is reused
-    try {
-      window.localStorage.removeItem("canvases");
-    } catch {}
-    try {
-      const newSession = (typeof crypto !== 'undefined' && (crypto as any).randomUUID) ? crypto.randomUUID() : String(Date.now())
-      window.sessionStorage.setItem("canvasSessionId", newSession)
-      setSessionId(newSession)
-    } catch {
-      const newSession = String(Date.now())
-      setSessionId(newSession)
+      
+      // Create Chat 1
+      const chatResponse = await fetch("/api/chat-sessions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: chat1Name })
+      })
+      
+      if (chatResponse.ok) {
+        const newChat = await chatResponse.json()
+        setChatSessions([newChat])
+        setActiveChatId(newChat.id)
+      }
+      
+    } catch (error) {
+      console.error("Reset failed:", error)
     }
-
-    const first = { id: crypto.randomUUID(), name: "Canvas 1", persistenceKey: `canvas-1-${(typeof crypto !== 'undefined' && (crypto as any).randomUUID) ? crypto.randomUUID() : String(Date.now())}` };
-    setCanvases([first]);
-    setActiveId(first.id);
-    setEditor(null);
-    setChatSessions(() => {
-      const id = crypto.randomUUID();
-      setActiveChatId(id);
-      return [{ id, title: "Chat 1" }];
-    });
-    setLeftCollapsed(false);
-    setChatSidebarOpen(false);
   }
 
   async function exportCanvas(name: string): Promise<Blob | null> {
@@ -203,113 +296,123 @@ export default function Home() {
     } catch {}
   }
 
+  if (loading) {
+    return (
+      <AuthWrapper>
+        <div className="h-full flex items-center justify-center">
+          <div className="text-neutral-600">Loading your canvases...</div>
+        </div>
+      </AuthWrapper>
+    )
+  }
+
   return (
-    <div className="h-screen w-screen grid gap-3 p-4" style={{ gridTemplateColumns: leftCollapsed ? "12px 1fr 380px" : "260px 1fr 380px" }}>
-      {leftCollapsed ? (
-        <div className="rounded-2xl border bg-white shadow-sm relative flex items-center justify-center pointer-events-none">
-          <button
-            className="pointer-events-auto w-4 h-8 flex items-center justify-center text-[10px] leading-none text-neutral-900 rounded border border-neutral-400 bg-neutral-200 hover:bg-neutral-300 shadow-sm"
-            title="Show canvases"
-            aria-label="Show canvases"
-            onClick={() => setLeftCollapsed(false)}
-          >
-            ›
-          </button>
-        </div>
-      ) : (
-      <div className="rounded-2xl border bg-white shadow-sm overflow-hidden flex flex-col relative">
-        <div className="p-3 border-b border-neutral-200 flex items-center justify-between bg-white text-neutral-900">
-          <div className="font-semibold text-neutral-900">Canvases</div>
-          <div className="flex items-center gap-2">
-            <button onClick={addCanvas} className="text-xs rounded-md bg-neutral-900 text-white px-2 py-1">New</button>
+    <AuthWrapper>
+      <div className="h-full w-full grid gap-3 p-4" style={{ gridTemplateColumns: leftCollapsed ? "12px 1fr 380px" : "260px 1fr 380px" }}>
+        {leftCollapsed ? (
+          <div className="rounded-2xl border bg-white shadow-sm relative flex items-center justify-center pointer-events-none">
             <button
-              className="text-xs px-2 py-1 rounded-md border border-red-300 text-red-700 hover:bg-red-50"
-              title="Reset everything"
-              onClick={resetEverything}
+              className="pointer-events-auto w-4 h-8 flex items-center justify-center text-[10px] leading-none text-neutral-900 rounded border border-neutral-400 bg-neutral-200 hover:bg-neutral-300 shadow-sm"
+              title="Show canvases"
+              aria-label="Show canvases"
+              onClick={() => setLeftCollapsed(false)}
             >
-              Reset
+              ›
             </button>
           </div>
-        </div>
-        <CanvasSidebar
-          canvases={canvases}
-          activeId={activeId}
-          onSelect={setActiveId}
-          onRename={(id, name) => setCanvases((v) => v.map((c) => (c.id === id ? { ...c, name } : c)))}
-          onDelete={deleteCanvas}
-          onReferAll={async () => {
-            const names = canvases.map((c) => c.name)
-            const event = new Event('submit') as any
-          }}
-          onExportAll={exportAllAsPdf}
-        />
-        <button
-          className="absolute top-1/2 -right-2 -translate-y-1/2 w-6 h-6 rounded-full border border-neutral-400 bg-neutral-200 shadow flex items-center justify-center text-xs text-neutral-900 hover:bg-neutral-300"
-          title="Hide canvases"
-          aria-label="Hide canvases"
-          onClick={() => setLeftCollapsed(true)}
-        >
-          ‹
-        </button>
-      </div>
-      )}
-      <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
-        {active ? (
-          <Tldraw key={active.persistenceKey} persistenceKey={active.persistenceKey} onMount={setEditor} />
         ) : (
-          <div className="w-full h-full flex items-center justify-center text-neutral-500 text-sm">
-            No canvases. Click "New" to create one.
+        <div className="rounded-2xl border bg-white shadow-sm overflow-hidden flex flex-col relative">
+          <div className="p-3 border-b border-neutral-200 flex items-center justify-between bg-white text-neutral-900">
+            <div className="font-semibold text-neutral-900">Canvases</div>
+            <div className="flex items-center gap-2">
+              <button onClick={addCanvas} className="text-xs rounded-md bg-neutral-900 text-white px-2 py-1">New</button>
+              <button
+                className="text-xs px-2 py-1 rounded-md border border-red-300 text-red-700 hover:bg-red-50"
+                title="Reset everything"
+                onClick={resetEverything}
+              >
+                Reset
+              </button>
+            </div>
           </div>
-        )}
-      </div>
-      <div className="rounded-2xl border bg-white shadow-sm overflow-hidden flex flex-col">
-        <div className="p-2 border-b border-neutral-200 flex items-center justify-end">
-          <button className="text-xs px-2 py-1 rounded border font-semibold text-neutral-900" onClick={() => setChatSidebarOpen((v) => !v)}>
-            {chatSidebarOpen ? 'Hide history' : 'Show history'}
+          <CanvasSidebar
+            canvases={canvases}
+            activeId={activeId}
+            onSelect={setActiveId}
+            onRename={renameCanvas}
+            onDelete={deleteCanvas}
+            onReferAll={async () => {
+              const names = canvases.map((c) => c.name)
+              const event = new Event('submit') as any
+            }}
+            onExportAll={exportAllAsPdf}
+          />
+          <button
+            className="absolute top-1/2 -right-2 -translate-y-1/2 w-6 h-6 rounded-full border border-neutral-400 bg-neutral-200 shadow flex items-center justify-center text-xs text-neutral-900 hover:bg-neutral-300"
+            title="Hide canvases"
+            aria-label="Hide canvases"
+            onClick={() => setLeftCollapsed(true)}
+          >
+            ‹
           </button>
         </div>
-        <div className="flex-1 flex min-h-0">
-        {chatSidebarOpen && (
-        <div className="w-40 border-r border-neutral-200 p-2 space-y-2 text-neutral-900">
-          <div className="flex items-center justify-between mb-2">
-            <div className="text-sm font-semibold text-neutral-900">Chats</div>
-            <button
-              className="w-6 h-6 rounded-full bg-neutral-900 text-white text-sm"
-              title="New chat"
-              onClick={() => {
-                setChatSessions((prev) => {
-                  const id = crypto.randomUUID();
-                  const next = [{ id, title: `Chat ${prev.length + 1}` }, ...prev].slice(0, 5);
-                  setActiveChatId(id);
-                  return next;
-                });
-              }}
-            >
-              +
+        )}
+        <div className="rounded-2xl border bg-white shadow-sm overflow-hidden">
+          {active ? (
+            <Tldraw key={active.persistenceKey} persistenceKey={active.persistenceKey} onMount={setEditor} />
+          ) : (
+            <div className="w-full h-full flex items-center justify-center text-neutral-500 text-sm">
+              No canvases. Click "New" to create one.
+            </div>
+          )}
+        </div>
+        <div className="rounded-2xl border bg-white shadow-sm overflow-hidden flex flex-col">
+          <div className="p-2 border-b border-neutral-200 flex items-center justify-end">
+            <button className="text-xs px-2 py-1 rounded border font-semibold text-neutral-900" onClick={() => setChatSidebarOpen((v) => !v)}>
+              {chatSidebarOpen ? 'Hide history' : 'Show history'}
             </button>
           </div>
-          <div className="space-y-1 overflow-auto">
-            {chatSessions.map((s) => (
+          <div className="flex-1 flex min-h-0">
+          {chatSidebarOpen && (
+          <div className="w-40 border-r border-neutral-200 p-2 space-y-2 text-neutral-900">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-sm font-semibold text-neutral-900">Chats</div>
               <button
-                key={s.id}
-                className={`w-full text-left text-sm px-2 py-1 rounded-md font-semibold ${
-                  s.id === activeChatId
-                    ? "bg-neutral-900 text-white"
-                    : "bg-white text-neutral-900 hover:bg-neutral-100 border border-neutral-200"
-                }`}
-                onClick={() => setActiveChatId(s.id)}
+                className="w-6 h-6 rounded-full bg-neutral-900 text-white text-sm"
+                title="New chat"
+                onClick={addChatSession}
               >
-                {s.title}
+                +
               </button>
-            ))}
+            </div>
+            <div className="space-y-1 overflow-auto">
+              {chatSessions.map((s) => (
+                <button
+                  key={s.id}
+                  className={`w-full text-left text-sm px-2 py-1 rounded-md font-semibold ${
+                    s.id === activeChatId
+                      ? "bg-neutral-900 text-white"
+                      : "bg-white text-neutral-900 hover:bg-neutral-100 border border-neutral-200"
+                  }`}
+                  onClick={() => setActiveChatId(s.id)}
+                >
+                  {s.title}
+                </button>
+              ))}
+            </div>
+          </div>
+          )}
+          <div className="flex-1 min-w-0">
+            <ChatAssistant 
+              key={activeChatId} 
+              chatSessionId={activeChatId}
+              listCanvasNames={canvases.map((c) => c.name)} 
+              exportCanvas={exportCanvas} 
+            />
+          </div>
           </div>
         </div>
-        )}
-        <div className="flex-1 min-w-0">
-          <ChatAssistant key={activeChatId} listCanvasNames={canvases.map((c) => c.name)} exportCanvas={exportCanvas} />
-        </div>
-        </div>
       </div>
-    </div>
+    </AuthWrapper>
   );
 }

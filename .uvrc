@@ -1,0 +1,11 @@
+# UV configuration for automatic dependency management
+# This file ensures uv handles dependencies automatically for Python scripts
+
+# Always use virtual environment
+UV_PYTHON_PREFERENCE=managed
+
+# Automatically install dependencies when running scripts
+UV_SYNC_ON_RUN=true
+
+# Use the local bin path
+export PATH="$HOME/.local/bin:$PATH"

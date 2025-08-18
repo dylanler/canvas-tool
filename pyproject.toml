@@ -1,0 +1,15 @@
+[project]
+name = "canvas-tool"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp>=1.13.0",
+]
+
+[tool.uv]
+# Automatically sync dependencies when running scripts
+sync-on-run = true
+# Use uv for running Python scripts with automatic dependency management
+managed = true

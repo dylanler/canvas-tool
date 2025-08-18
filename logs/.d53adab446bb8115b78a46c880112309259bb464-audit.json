@@ -1,0 +1,15 @@
+{
+    "keep": {
+        "days": true,
+        "amount": 14
+    },
+    "auditLog": "/mnt/c/Users/dylan/github/canvas-tool/logs/.d53adab446bb8115b78a46c880112309259bb464-audit.json",
+    "files": [
+        {
+            "date": 1755424099797,
+            "name": "/mnt/c/Users/dylan/github/canvas-tool/logs/mcp-puppeteer-2025-08-17.log",
+            "hash": "ed8a477bfd5327fbb43ca4e806a62fa3d3312e97ca05e56759c3669de59e293e"
+        }
+    ],
+    "hashType": "sha256"
+}
